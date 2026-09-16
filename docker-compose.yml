@@ -1,0 +1,95 @@
+name: remonthub
+
+# Each concern is its own service:
+#   db        – PostgreSQL 16 (data store)
+#   redis     – cache / bot FSM storage
+#   api       – FastAPI application (REST + OpenAPI docs at /docs)
+#   bot       – Telegram bot (aiogram), talks to the API over the internal network
+#   frontend  – Next.js site, built from the sibling ../service-for-building-home repo
+#
+# Every host port binds to 127.0.0.1 only — a reverse proxy (nginx) is the
+# single public entry point; nothing here needs to be reachable directly.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-remonthub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-remonthub}
+      POSTGRES_DB: ${POSTGRES_DB:-remonthub}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-remonthub} -d ${POSTGRES_DB:-remonthub}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-remonthub}:${POSTGRES_PASSWORD:-remonthub}@db:5432/${POSTGRES_DB:-remonthub}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - uploads-data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["/app/scripts/start-api.sh"]
+
+  frontend:
+    build:
+      context: ../service-for-building-home
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${FRONTEND_API_URL:-http://localhost:8000/api}
+        NEXT_BASE_PATH: ${FRONTEND_BASE_PATH:-}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3040}:3000"
+    depends_on:
+      api:
+        condition: service_started
+
+  bot:
+    build:
+      context: .
+      dockerfile: docker/bot.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_BASE_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_started
+    command: ["python", "-m", "bot.main"]
+
+volumes:
+  db-data:
+  redis-data:
+  uploads-data:

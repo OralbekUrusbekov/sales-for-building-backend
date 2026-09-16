@@ -1,0 +1,30 @@
+# byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# virtualenv
+.venv/
+venv/
+env/
+
+# env vars — keep the template
+.env
+.env.*
+!.env.example
+
+# local db files (real db runs in postgres, docker or bare-metal)
+*.sqlite3
+*.db
+
+# uploaded files (dev bare-metal run; docker uses a named volume in prod)
+uploads/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
